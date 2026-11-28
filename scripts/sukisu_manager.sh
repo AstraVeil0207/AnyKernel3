@@ -3,9 +3,8 @@ set -euo pipefail
 
 CHANNEL="${1:-release}"
 KSU_DIR="${2:-KernelSU}"
-# 上游 Release 指向 sukisu-release，APK 不再发布到旧的 sukisu-result 仓库。
-# 该端点需 Accept: application/json 才返回 JSON，字段与 Gitea 兼容
-API="https://cnb.cool/shirkneko/sukisu-release/-/releases"
+# 上游安装包迁到 sukisu-nova/Release，APK 提交在 manager-ci 分支，manifest.json 字段与 Gitea Release 兼容
+API="https://cnb.cool/sukisu-nova/Release/-/git/raw"
 ACCEPT="Accept: application/json"
 
 case "$CHANNEL" in
@@ -27,16 +26,14 @@ if [ "$ROLLING" = false ]; then
 fi
 
 if [ "$ROLLING" = true ]; then
-  RELEASE=$(curl -fsSL --retry 3 --max-time 30 -H "$ACCEPT" "$API/tags/manager-ci")
+  RELEASE=$(curl -fsSL --retry 3 --max-time 30 "$API/manager-ci/manifest.json")
 fi
 
 TAG=$(printf '%s' "$RELEASE" | jq -r '.tag_name')
 ASSETS=$(printf '%s' "$RELEASE" | jq -r '
   [ .assets[]?
-    | select(.name | test("release\\.apk$"; "i"))
+    | select(.name | test("arm64-v8a-release\\.apk$"; "i"))
     | select(.name | test("(?i)debug|spoofed") | not) ]
-  | sort_by(if (.name | test("(?i)universal")) then 0
-            elif (.name | test("(?i)arm64-v8a")) then 1 else 2 end)
   | .[] | [.name, .browser_download_url] | @tsv
 ')
 if [ -z "$ASSETS" ]; then

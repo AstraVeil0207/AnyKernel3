@@ -10,7 +10,6 @@ MODE="${2:-auto}"   # auto | bakasu | sukisu
 # 版本标识常量（base64 编码，避免明文暴露）
 declare -A PATTERNS
 PATTERNS[bakasu]=$(echo 'UkVQT19OQU1FIDo9IEJha2FTVQ==' | base64 -d | base64)
-PATTERNS[sukisu_branch]=$(echo 'QCQoY2FsbCBnaXRfYnJhbmNoKQ==' | base64 -d | base64)
 PATTERNS[finasu_branch]=$(echo 'QCQoS1NVX1ZFUlNJT05fQlJBTkNIKQ==' | base64 -d | base64)
 PATTERNS[marker]=$(echo 'QmFrYVNV' | base64 -d | base64)
 PATTERNS[finasu_marker]=$(echo 'S1NVX1ZFUlNJT05fQlJBTkNI' | base64 -d | base64)
@@ -26,16 +25,14 @@ apply_bakasu() {
 }
 
 apply_sukisu() {
-  local kbuild=""
-  for f in "$KSU_DIR/kernel/Kbuild" "$KSU_DIR/kernel/Makefile"; do
-    if [ -f "$f" ]; then kbuild="$f"; break; fi
-  done
-  if [ -n "$kbuild" ]; then
-    local pat=$(echo "${PATTERNS[sukisu_branch]}" | base64 -d)
-    sed -i "s/${pat}/@${BRAND}/" "$kbuild"
-    local rel="${kbuild#${KSU_DIR}/}"
-    git -C "$KSU_DIR" update-index --skip-worktree "$rel"
-  fi
+  # KSU_VERSION_FULL 以 := 立即展开，求值时就把 @ 后的分支名固化进 CFLAGS；
+  # 之后再赋值 KSU_BUILD_REF 已来不及，因此直接改写该行的分支取值点。
+  local version_mk="$KSU_DIR/kernel/kbuild-config/version.mk"
+  [ -f "$version_mk" ] || { echo "::error::未找到 $version_mk，SukiSU-Nova 结构可能已变化"; exit 1; }
+  sed -i -E "s|^(KSU_VERSION_FULL[[:space:]]*:=.*)\\\$\(call git_branch\)|\1${BRAND}|" "$version_mk"
+  grep -qE "^KSU_VERSION_FULL[[:space:]]*:=.*@${BRAND}[),]" "$version_mk" \
+    || { echo "::error::未能在 $version_mk 中固定内核版本后缀（上游结构可能已变化）"; exit 1; }
+  git -C "$KSU_DIR" update-index --skip-worktree kernel/kbuild-config/version.mk
 }
 
 apply_finasu() {

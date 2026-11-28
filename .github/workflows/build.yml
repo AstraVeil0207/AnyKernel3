@@ -500,10 +500,9 @@ jobs:
             "SukiSU-Nova")
               echo "添加 ${{ inputs.ksu_variant }}..."
               curl -LSs "https://git.zako.shirkneko.top:20004/shirkneko/SukiSU/raw/branch/main/kernel/setup.sh" | bash -s -- "$BRANCH"
-              # 内核侧 KSU 版本来源对齐官方最新上传 Manager 构建：
-              # SukiSU-Nova 版本号 = 30000 + main 提交数 + 996
-              #（main 分支定义在 kernel/Kbuild；builtin 分支仍使用旧版公式）。
-              # 将 REPO_BRANCH 改写为管理器构建提交，保证内核 KSU 版本与拉取的管理器安装包严格一致
+              # 内核侧 KSU 版本对齐官方最新上传 Manager 构建（30000 + main 提交数 + 996）。
+              # 上游 kernel/kbuild-config/version.mk 已按 REPO_BRANCH（默认 main）的提交数计算，
+              # 与按 main 构建的管理器天然一致，因此只需确认该提交可用，无需再改写源码。
               if [ -n "$KSU_COMMIT" ] && [ "$BRANCH" != "main" ] && [ "$BRANCH" != "builtin" ]; then
                 echo "SukiSU-Nova 使用自定义提交（$BRANCH），跳过管理器版本对齐"
               elif [ -n "$KSU_COMMIT" ]; then
@@ -514,20 +513,7 @@ jobs:
                   echo "::error::官方构建提交 $KSU_COMMIT 不在 KernelSU 仓库中，无法对齐版本来源"
                   exit 1
                 fi
-                if [ -f "KernelSU/kernel/Kbuild" ]; then
-                  KSU_VERSION_SOURCE="KernelSU/kernel/Kbuild"
-                else
-                  KSU_VERSION_SOURCE="KernelSU/kernel/Makefile"
-                fi
-                if ! sed -i -E "s|^(REPO_BRANCH[[:space:]]*[:?+]?=)[[:space:]]*main[[:space:]]*\$|\1 $KSU_COMMIT|" "$KSU_VERSION_SOURCE"; then
-                  echo "::error::改写 $KSU_VERSION_SOURCE 的 REPO_BRANCH 失败，无法对齐管理器版本"
-                  exit 1
-                fi
-                if ! grep -qE "^REPO_BRANCH[[:space:]]*[:?+]?=[[:space:]]*$KSU_COMMIT[[:space:]]*\$" "$KSU_VERSION_SOURCE"; then
-                  echo "::error::未能在 $KSU_VERSION_SOURCE 中对齐 REPO_BRANCH（上游结构可能已变化），无法对齐管理器版本"
-                  exit 1
-                fi
-                echo "SukiSU-Nova 内核侧版本来源已对齐官方上传构建提交 $KSU_COMMIT (KSU 版本 $((30000 + $(git -C KernelSU rev-list --count "$KSU_COMMIT") + 996)))"
+                echo "SukiSU-Nova 内核版本由上游按 main 提交数计算（$((30000 + $(git -C KernelSU rev-list --count "$KSU_COMMIT") + 996))），与管理器 $KSU_COMMIT 一致"
               fi
               bash "$GITHUB_WORKSPACE/scripts/ksu_post_setup.sh" KernelSU sukisu
               ;;
@@ -746,21 +732,21 @@ jobs:
       # 此步骤动态同步：读取官方 main 的 uapi/supercall.h，把缺失常量/结构
       # 按 main 原文移植进 builtin 检出并抬升 UAPI 号，UAPI >= 6 时附带
       # 注入 LOOKUP_SYMBOLS 处理器 + symbol_resolver 内核侧能力；
-      # 上游 builtin 自行同步后自动跳过，详见 scripts/ksu_uapi_sync/sync_uapi.sh
+      # builtin 的 UAPI 不低于 main 时直接跳过（当前两者均为 UAPI 6），
+      # 保留以便 main 再次抬升时自动补齐。
       - name: 同步 SukiSU-Nova 内核 UAPI 版本（对齐官方管理器）
         if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}
-        run: bash "$GITHUB_WORKSPACE/scripts/ksu_uapi_sync/sync_uapi.sh" KernelSU
+        run: bash "$GITHUB_WORKSPACE/scripts/sukisu_uapi_sync/sync.sh" KernelSU
 
-      # SukiSU-Nova builtin 分支的 hook/lsm_hook.c 仍以旧签名调用
-      # security_add_hooks(hooks, count, "ksu")，6.8+ 内核要求 const struct lsm_id *，
-      # android16-6.12 GKI 编译直接失败。
-      # 补丁内部以 LINUX_VERSION_CODE 守卫，6.7 及以下内核行为不变，
-      # SukiSU-Nova 上游修复后按内容检测自动跳过。
-      - name: 应用 SukiSU-Nova 内核 API 兼容补丁 (6.8+ lsm_id)
+      # builtin 在 app 启动路径（hook/setuid_hook.c）对管理器与授权应用直接
+      # disable_seccomp()，管理器首页 "Seccomp 状态" 显示"未启用"；main 分支 /
+      # BakaSU 为保留过滤器的"过滤模式"。builtin 尚无此实现，本地补齐
+      #（5.10+ 放行 reboot 的 action cache，更早内核维持原行为）。
+      - name: 应用 SukiSU-Nova seccomp 过滤模式补丁
         if: inputs.ksu_variant == 'SukiSU-Nova' && inputs.ksu_mode != '禁用KSU'
         working-directory: ${{ env.KERNEL_ROOT }}
-        run: bash "$GITHUB_WORKSPACE/scripts/sukisu_compat/apply.sh" KernelSU
+        run: bash "$GITHUB_WORKSPACE/scripts/sukisu_seccomp_filter/apply.sh" KernelSU
 
       - name: 应用 SUSFS 补丁
         if: inputs.enable_susfs
